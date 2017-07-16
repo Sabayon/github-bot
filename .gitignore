@@ -1,0 +1,7 @@
+assets/
+minion.data
+minion.data.lock
+shared_data
+public/
+*.bak
+build_test.sh
