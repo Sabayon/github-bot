@@ -9,6 +9,8 @@ use Minion;
 use Mojolicious::Plugin::AssetPack;
 use IPC::Open3;
 use Storable qw(lock_store lock_nstore lock_retrieve);
+use Git::Sub qw(clone tag push);
+use Mojo::File qw(tempdir path);
 
 use constant GH_TOKEN     => $ENV{GH_TOKEN};
 use constant GH_USER      => $ENV{GH_USER};
@@ -18,10 +20,12 @@ use constant BASE_URL     => $ENV{BASE_URL};
 use constant WORKDIR      => $ENV{WORK_DIRECTORY} || "./";
 use constant MINION_DATA  => $ENV{MINION_DATA} || "minion.data";
 use constant SHARED_DATA  => $ENV{SHARED_DATA} || "shared_data";
-use constant BUILD_SCRIPT => $ENV{BUILD_SCRIPT};
+use constant BUILD_SCRIPT => $ENV{BUILD_SCRIPT}
+    ? path( $ENV{BUILD_SCRIPT} )->to_abs
+    : ();
 
 die "You need to pass GH_TOKEN, GH_USER and GH_REPO by env"
-    unless CONTEXT && GH_REPO && GH_USER && GH_TOKEN;
+    unless CONTEXT && GH_REPO && GH_USER && GH_TOKEN && BUILD_SCRIPT;
 
 plugin AssetPack =>
     { pipes => [qw(Less Sass Css CoffeeScript Riotjs JavaScript Combine)] };
@@ -106,10 +110,15 @@ app->minion->add_task(
         my $gh_user      = GH_USER;
         my $gh_repo      = GH_REPO;
         my $json_payload = encode_json $payload->{$event_type};
+        my $workdir      = tempdir;
+
+        # XXX: Add git clone and checkout of the PR branch
+        # Script is executed into that context
+        #git::clone
 
         eval {
             @output =
-                qx(echo '$json_payload' | $script $gh_user $gh_repo $sha 2>&1);
+                qx(cd $workdir; echo '$json_payload' | $script $gh_user $gh_repo $sha 2>&1);
             $return = $?;
         };
         $shared_data{$sha}{error} = $@ and $return = 1
