@@ -42,6 +42,7 @@ app->asset->process(
 
 app->defaults( title => "Sabayon buildbot" );
 
+# Main task that execute our custom BUILD_SCRIPT
 app->minion->add_task(
     build_repo => sub {
         my ( $job, $payload, $event_type ) = @_;
@@ -62,14 +63,16 @@ app->minion->add_task(
         my $issues = $github->issue;
 
         my @statuses = $repos->list_statuses($sha);
+
+        # Don't run if some other worker picked up the job
         return
                if @statuses > 0
             && $statuses[0]->{context} eq CONTEXT
-            && $statuses[0]->{state} eq "pending"
-            ; # Don't run if some other worker picked up the job (read that from github statuses)
+            && $statuses[0]->{state} eq "pending";
 
         my %shared_data;
 
+        # update github status.
         my $status = $repos->create_status(
             $sha,
             {   "state" => "pending",
@@ -84,6 +87,7 @@ app->minion->add_task(
 
         lock_store \%shared_data, WORKDIR . SHARED_DATA;
 
+        # Create a comment to tell the user that we are working on it.
         my $comment = $issues->create_comment(
             $pr_number,
             {   body => BASE_URL
@@ -94,20 +98,22 @@ app->minion->add_task(
             }
         );
 
-        my $json_payload = encode_json $payload->{$event_type};
-
+        # Execute the build.
+        # Passing the github data into the process STDIN
         my @output;
         my $return;
-        my $script  = BUILD_SCRIPT;
-        my $gh_user = GH_USER;
-        my $gh_repo = GH_REPO;
+        my $script       = BUILD_SCRIPT;
+        my $gh_user      = GH_USER;
+        my $gh_repo      = GH_REPO;
+        my $json_payload = encode_json $payload->{$event_type};
 
         eval {
             @output =
                 qx(echo '$json_payload' | $script $gh_user $gh_repo $sha 2>&1);
             $return = $?;
         };
-        $shared_data{$sha}{error} = $@ and $return = 1 if $@;
+        $shared_data{$sha}{error} = $@ and $return = 1
+            if $@;    # Collect (might-be) errors
 
         my $state = $return != 0 ? "failure" : "success";
 
@@ -116,6 +122,7 @@ app->minion->add_task(
         $shared_data{$sha}{status}      = $state;
         $shared_data{$sha}{output}      = \@output;
 
+        # Update comment to reflect build status.
         $comment = $issues->update_comment(
             $comment->{id},
             {   body => BASE_URL
@@ -127,6 +134,7 @@ app->minion->add_task(
             }
         );
 
+        # Update the GH status relative to the SHA
         $status = $repos->create_status(
             $sha,
             {   "state" => $state,
@@ -139,6 +147,7 @@ app->minion->add_task(
         );
 
         lock_store \%shared_data, WORKDIR . SHARED_DATA;
+
         $job->app->log->debug(
             "Event: $event_type SHA: $sha [PR#$pr_number] $state - Build finished"
         );
@@ -159,6 +168,7 @@ get '/build/:sha' => { layout => 'result' } => sub {
     my $c   = shift;
     my $sha = $c->param('sha');
 
+    # Retrieve of build data could be delayed if we are under heavy load.
     return $c->delay(
         sub { $c->build_data( $sha => shift->begin ) },
         sub {
