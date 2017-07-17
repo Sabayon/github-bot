@@ -27,6 +27,17 @@ use constant BUILD_SCRIPT => $ENV{BUILD_SCRIPT}
 die "You need to pass GH_TOKEN, GH_USER and GH_REPO by env"
     unless CONTEXT && GH_REPO && GH_USER && GH_TOKEN && BUILD_SCRIPT;
 
+my @failure_messages = (
+    "Ufff. :confused: it seems your PR failed passing build phase :disappointed:",
+    "MAYDAY, MAYDAY, MAYDAY :confounded: something is failing here!",
+    ":no_good:"
+);
+my @success_messages = (
+    "All fine here! :bowtie:", "We have a winner! :sunglasses:",
+    ":+1:",                    ":ok_hand:"
+);
+my @pending_messages = ( ":fire: Working on it", ":running:" );
+
 plugin AssetPack =>
     { pipes => [qw(Less Sass Css CoffeeScript Riotjs JavaScript Combine)] };
 
@@ -81,7 +92,6 @@ app->minion->add_task(
             $sha,
             {   "state" => "pending",
                 ( "target_url" => BASE_URL . "/build/$sha" ) x !!(BASE_URL),
-
                 "context" => CONTEXT
             }
         );
@@ -94,11 +104,12 @@ app->minion->add_task(
         # Create a comment to tell the user that we are working on it.
         my $comment = $issues->create_comment(
             $pr_number,
-            {   body => BASE_URL
-                ? "Build is in progress, please stand by. You can see the build result at: "
-                    . BASE_URL
-                    . "/build/$sha"
-                : "Build is in progress"
+            {   body => $pending_messages[ rand @pending_messages ]
+                    . (
+                    BASE_URL
+                    ? "check out the [details](" . BASE_URL . "/build/$sha)"
+                    : ()
+                    )
             }
         );
 
@@ -130,16 +141,20 @@ app->minion->add_task(
         $shared_data{$sha}{exit_status} = $return >> 8;
         $shared_data{$sha}{status}      = $state;
         $shared_data{$sha}{output}      = \@output;
+        my $msg =
+              $state eq "failure"
+            ? $failure_messages[ rand @failure_messages ]
+            : $success_messages[ rand @success_messages ];
 
         # Update comment to reflect build status.
         $comment = $issues->update_comment(
             $comment->{id},
-            {   body => BASE_URL
-                ? "Build is a **${state}**.
-          [Click here to check the build result]("
-                    . BASE_URL
-                    . "/build/$sha)"
-                : "Build is a $status."
+            {   body => $msg
+                    . (
+                    BASE_URL
+                    ? "check out the [details](" . BASE_URL . "/build/$sha)"
+                    : ()
+                    )
             }
         );
 
