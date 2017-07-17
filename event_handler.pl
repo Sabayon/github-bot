@@ -46,14 +46,20 @@ app->minion->add_task(
     build_repo => sub {
         my ( $job, $payload, $event_type ) = @_;
 
-        my $sha = $payload->{$event_type}->{head}->{sha};
+        my $sha       = $payload->{$event_type}->{head}->{sha};
+        my $patch_url = $payload->{$event_type}->{patch_url};
+        my $pr_number = $payload->{$event_type}->{number};
 
-        $job->app->log->debug("WORKING on $event_type with sha $sha");
+        $job->app->log->debug(
+            "Event: $event_type SHA: $sha [PR#$pr_number] - Build start");
 
         my $github = Net::GitHub->new( access_token => GH_TOKEN )
             or $job->app->log->debug("Could not create Net::GitHub object");
-        my $repos = $github->repos;
-        $repos->set_default_user_repo( GH_USER, GH_REPO );
+
+        $github->set_default_user_repo( GH_USER, GH_REPO );
+
+        my $repos  = $github->repos;
+        my $issues = $github->issue;
 
         my @statuses = $repos->list_statuses($sha);
         return
@@ -72,10 +78,21 @@ app->minion->add_task(
                 "context" => CONTEXT
             }
         );
+
         $shared_data{$sha}{gh_state} = "pending";
         $shared_data{$sha}{status}   = "building";
 
         lock_store \%shared_data, WORKDIR . SHARED_DATA;
+
+        my $comment = $issues->create_comment(
+            $pr_number,
+            {   body => BASE_URL
+                ? "Build is in progress, please stand by. You can see the build result at: "
+                    . BASE_URL
+                    . "/build/$sha"
+                : "Build is in progress"
+            }
+        );
 
         my $json_payload = encode_json $payload->{$event_type};
 
@@ -99,6 +116,17 @@ app->minion->add_task(
         $shared_data{$sha}{status}      = $state;
         $shared_data{$sha}{output}      = \@output;
 
+        $comment = $issues->update_comment(
+            $comment->{id},
+            {   body => BASE_URL
+                ? "Build is a **${state}**.
+          [Click here to check the build result]("
+                    . BASE_URL
+                    . "/build/$sha)"
+                : "Build is a $status."
+            }
+        );
+
         $status = $repos->create_status(
             $sha,
             {   "state" => $state,
@@ -111,6 +139,9 @@ app->minion->add_task(
         );
 
         lock_store \%shared_data, WORKDIR . SHARED_DATA;
+        $job->app->log->debug(
+            "Event: $event_type SHA: $sha [PR#$pr_number] $state - Build finished"
+        );
     }
 );
 
