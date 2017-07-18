@@ -11,6 +11,7 @@ use IPC::Open3;
 use Storable qw(lock_store lock_nstore lock_retrieve);
 use Git::Sub qw(clone tag push);
 use Mojo::File qw(tempdir path);
+use Cwd;
 
 use constant GH_TOKEN     => $ENV{GH_TOKEN};
 use constant GH_USER      => $ENV{GH_USER};
@@ -62,9 +63,15 @@ app->minion->add_task(
     build_repo => sub {
         my ( $job, $payload, $event_type ) = @_;
 
+        my $current_dir = cwd;
+
         my $sha       = $payload->{$event_type}->{head}->{sha};
         my $patch_url = $payload->{$event_type}->{patch_url};
         my $pr_number = $payload->{$event_type}->{number};
+        my $git_url   = $payload->{$event_type}->{base}->{repo}->{clone_url};
+        my $git_repo_name = $payload->{$event_type}->{base}->{repo}->{name};
+
+        $job->app->log->debug("CWD: $current_dir");
 
         $job->app->log->debug(
             "Event: $event_type SHA: $sha [PR#$pr_number] - Build start");
@@ -107,7 +114,7 @@ app->minion->add_task(
             {   body => $pending_messages[ rand @pending_messages ]
                     . (
                     BASE_URL
-                    ? "check out the [details](" . BASE_URL . "/build/$sha)"
+                    ? " check out the [details](" . BASE_URL . "/build/$sha)"
                     : ()
                     )
             }
@@ -123,17 +130,25 @@ app->minion->add_task(
         my $json_payload = encode_json $payload->{$event_type};
         my $workdir      = tempdir;
 
-        # XXX: Add git clone and checkout of the PR branch
-        # Script is executed into that context
-        #git::clone
+        $job->app->log->debug("Working on $workdir");
+
+        chdir($workdir);
+        git::clone $git_url;
+
+        chdir( path( $workdir, $git_repo_name ) );
+        git::fetch "origin", "pull/$pr_number/head:CI_test";
+        git::checkout "CI_test";
 
         eval {
             @output =
-                qx(cd $workdir; echo '$json_payload' | $script $gh_user $gh_repo $sha 2>&1);
+                qx(echo '$json_payload' | $script $gh_user $gh_repo $sha 2>&1);
             $return = $?;
         };
         $shared_data{$sha}{error} = $@ and $return = 1
             if $@;    # Collect (might-be) errors
+
+        chdir($current_dir);
+        path($workdir)->remove_tree;
 
         my $state = $return != 0 ? "failure" : "success";
 
@@ -152,7 +167,7 @@ app->minion->add_task(
             {   body => $msg
                     . (
                     BASE_URL
-                    ? "check out the [details](" . BASE_URL . "/build/$sha)"
+                    ? " check out the [details](" . BASE_URL . "/build/$sha)"
                     : ()
                     )
             }
