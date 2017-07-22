@@ -25,6 +25,8 @@ RUN cpanm Mojolicious \
                    Git::Sub \
                    Mojo::File && mkdir /app
 
+ADD event_handler.pl /app/app.pl
+
 # Set environment variables.
 ENV HOME /app
 
@@ -32,4 +34,4 @@ ENV HOME /app
 WORKDIR /app
 
 # Define default command.
-CMD ["bash"]
+ENTRYPOINT ["/usr/local/bin/hypnotoad", "/app/app.pl"]
