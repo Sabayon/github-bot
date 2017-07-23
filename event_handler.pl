@@ -13,20 +13,19 @@ use Git::Sub qw(clone tag push);
 use Mojo::File qw(tempdir path);
 use Cwd;
 
-use constant GH_TOKEN     => $ENV{GH_TOKEN};
-use constant GH_USER      => $ENV{GH_USER};
-use constant GH_REPO      => $ENV{GH_REPO};
-use constant CONTEXT      => $ENV{GH_CONTEXT} || "package build";
-use constant BASE_URL     => $ENV{BASE_URL};
-use constant WORKDIR      => $ENV{WORK_DIRECTORY} || "./";
-use constant MINION_DATA  => $ENV{MINION_DATA} || "minion.data";
-use constant SHARED_DATA  => $ENV{SHARED_DATA} || "shared_data";
-use constant BUILD_SCRIPT => $ENV{BUILD_SCRIPT}
-    ? path( $ENV{BUILD_SCRIPT} )->to_abs
-    : ();
+use constant GH_TOKEN         => $ENV{GH_TOKEN};
+use constant CONTEXT          => $ENV{GH_CONTEXT} || "package build";
+use constant BASE_URL         => $ENV{BASE_URL};
+use constant WORKDIR          => $ENV{WORK_DIRECTORY} || "./";
+use constant MINION_DATA      => $ENV{MINION_DATA} || "minion.data";
+use constant SHARED_DATA      => $ENV{SHARED_DATA} || "shared_data";
+use constant BUILD_SCRIPT     => $ENV{BUILD_SCRIPT} || "./test_ci.sh";
+use constant GH_ALLOWED_USERS => $ENV{GH_ALLOWED_USERS};
+use constant GH_ALLOWED_REPOS => $ENV{GH_ALLOWED_REPOS};
+use constant PUBLIC => 1;
 
-die "You need to pass GH_TOKEN, GH_USER and GH_REPO by env"
-    unless CONTEXT && GH_REPO && GH_USER && GH_TOKEN && BUILD_SCRIPT;
+die "You need to pass GH_TOKEN by env"
+    unless GH_TOKEN;
 
 my @failure_messages = (
     "Ufff. :confused: it seems your PR failed passing build phase :disappointed:",
@@ -39,10 +38,16 @@ my @success_messages = (
 );
 my @pending_messages = ( ":fire: Working on it", ":running:" );
 
+my %allowed_repo;
+my %allowed_users;
+
+@allowed_repo{ split( /\s/, GH_ALLOWED_REPOS ) }++ if !!GH_ALLOWED_REPOS;
+@allowed_users{ split( /\s/, GH_ALLOWED_USERS ) }++ if !!GH_ALLOWED_USERS;
+
 plugin AssetPack =>
     { pipes => [qw(Less Sass Css CoffeeScript Riotjs JavaScript Combine)] };
 
-plugin Minion => { Storable => WORKDIR . MINION_DATA };
+plugin Minion => { Storable => path(WORKDIR, MINION_DATA) };
 
 app->asset->process(
     'app.css' => (
@@ -65,21 +70,27 @@ app->minion->add_task(
 
         my $current_dir = cwd;
 
-        my $sha       = $payload->{$event_type}->{head}->{sha};
+        my $sha      = $payload->{$event_type}->{head}->{sha};
+        my $base_sha = $payload->{$event_type}->{base}->{sha};
+
         my $patch_url = $payload->{$event_type}->{patch_url};
         my $pr_number = $payload->{$event_type}->{number};
         my $git_url   = $payload->{$event_type}->{base}->{repo}->{clone_url};
-        my $git_repo_name = $payload->{$event_type}->{base}->{repo}->{name};
+        my $git_repo  = $payload->{$event_type}->{base}->{repo}->{name};
+        my $git_repo_user =
+            $payload->{$event_type}->{base}->{repo}->{owner}->{login};
 
-        $job->app->log->debug("CWD: $current_dir");
+        return
+            unless PUBLIC
+            || ($allowed_users{$git_repo_user} && $allowed_repo{$git_repo});
 
-        $job->app->log->debug(
+        $job->app->log->info(
             "Event: $event_type SHA: $sha [PR#$pr_number] - Build start");
 
         my $github = Net::GitHub->new( access_token => GH_TOKEN )
             or $job->app->log->debug("Could not create Net::GitHub object");
 
-        $github->set_default_user_repo( GH_USER, GH_REPO );
+        $github->set_default_user_repo( $git_repo_user, $git_repo );
 
         my $repos  = $github->repos;
         my $issues = $github->issue;
@@ -106,7 +117,7 @@ app->minion->add_task(
         $shared_data{$sha}{gh_state} = "pending";
         $shared_data{$sha}{status}   = "building";
 
-        lock_store \%shared_data, WORKDIR . SHARED_DATA;
+        lock_store \%shared_data, path(WORKDIR, SHARED_DATA);
 
         # Create a comment to tell the user that we are working on it.
         my $comment = $issues->create_comment(
@@ -125,8 +136,6 @@ app->minion->add_task(
         my @output;
         my $return;
         my $script       = BUILD_SCRIPT;
-        my $gh_user      = GH_USER;
-        my $gh_repo      = GH_REPO;
         my $json_payload = encode_json $payload->{$event_type};
         my $workdir      = tempdir;
 
@@ -135,13 +144,20 @@ app->minion->add_task(
         chdir($workdir);
         git::clone $git_url;
 
-        chdir( path( $workdir, $git_repo_name ) );
+        chdir( path( $workdir, $git_repo ) );
         git::fetch "origin", "pull/$pr_number/head:CI_test";
         git::checkout "CI_test";
 
+        local $ENV{GH_USER} = $git_repo_user;
+        local $ENV{GH_REPO} = $git_repo;
+        local $ENV{BASE_SHA} = $base_sha;
+        local $ENV{SHA} = $sha;
+        local $ENV{PATCH_URL} = $patch_url;
+        local $ENV{PR_NUMBER} = $pr_number;
+
         eval {
             @output =
-                qx(echo '$json_payload' | $script $gh_user $gh_repo $sha 2>&1);
+                qx(echo '$json_payload' | $script $git_repo_user $git_repo $base_sha $sha $patch_url $pr_number 2>&1);
             $return = $?;
         };
         $shared_data{$sha}{error} = $@ and $return = 1
@@ -185,7 +201,7 @@ app->minion->add_task(
             }
         );
 
-        lock_store \%shared_data, WORKDIR . SHARED_DATA;
+        lock_store \%shared_data, path(WORKDIR, SHARED_DATA);
 
         $job->app->log->debug(
             "Event: $event_type SHA: $sha [PR#$pr_number] $state - Build finished"

@@ -12,7 +12,8 @@ RUN equo up && equo u && equo i dev-perl/App-cpanminus \
 				dev-perl/Moo \
 				dev-perl/Sereal-Decoder \
 				dev-perl/Sereal-Encoder \
-				app-emulation/docker
+				app-emulation/docker \
+				dev-vcs/git
 
 RUN cpanm Mojolicious \
                    Net::GitHub \
@@ -26,12 +27,14 @@ RUN cpanm Mojolicious \
                    Mojo::File && mkdir /app
 
 ADD event_handler.pl /app/app.pl
+ADD test_ci.sh /app/test_ci.sh
 
 # Set environment variables.
 ENV HOME /app
+ENV WORK_DIRECTORY=/app/shared
 
 # Define working directory.
 WORKDIR /app
 
 # Define default command.
-ENTRYPOINT ["/usr/local/bin/hypnotoad", "/app/app.pl"]
+ENTRYPOINT ["/app/app.pl"]
