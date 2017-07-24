@@ -22,7 +22,7 @@ use constant SHARED_DATA      => $ENV{SHARED_DATA} || "shared_data";
 use constant BUILD_SCRIPT     => $ENV{BUILD_SCRIPT} || "./test_ci.sh";
 use constant GH_ALLOWED_USERS => $ENV{GH_ALLOWED_USERS};
 use constant GH_ALLOWED_REPOS => $ENV{GH_ALLOWED_REPOS};
-use constant PUBLIC => 1;
+use constant PUBLIC           => 1;
 
 die "You need to pass GH_TOKEN by env"
     unless GH_TOKEN;
@@ -47,7 +47,7 @@ my %allowed_users;
 plugin AssetPack =>
     { pipes => [qw(Less Sass Css CoffeeScript Riotjs JavaScript Combine)] };
 
-plugin Minion => { Storable => path(WORKDIR, MINION_DATA) };
+plugin Minion => { Storable => path( WORKDIR, MINION_DATA ) };
 
 app->asset->process(
     'app.css' => (
@@ -82,7 +82,7 @@ app->minion->add_task(
 
         return
             unless PUBLIC
-            || ($allowed_users{$git_repo_user} && $allowed_repo{$git_repo});
+            || ( $allowed_users{$git_repo_user} && $allowed_repo{$git_repo} );
 
         $job->app->log->info(
             "Event: $event_type SHA: $sha [PR#$pr_number] - Build start");
@@ -117,7 +117,7 @@ app->minion->add_task(
         $shared_data{$sha}{gh_state} = "pending";
         $shared_data{$sha}{status}   = "building";
 
-        lock_store \%shared_data, path(WORKDIR, SHARED_DATA);
+        lock_store \%shared_data, path( WORKDIR, SHARED_DATA );
 
         # Create a comment to tell the user that we are working on it.
         my $comment = $issues->create_comment(
@@ -148,10 +148,10 @@ app->minion->add_task(
         git::fetch "origin", "pull/$pr_number/head:CI_test";
         git::checkout "CI_test";
 
-        local $ENV{GH_USER} = $git_repo_user;
-        local $ENV{GH_REPO} = $git_repo;
-        local $ENV{BASE_SHA} = $base_sha;
-        local $ENV{SHA} = $sha;
+        local $ENV{GH_USER}   = $git_repo_user;
+        local $ENV{GH_REPO}   = $git_repo;
+        local $ENV{BASE_SHA}  = $base_sha;
+        local $ENV{SHA}       = $sha;
         local $ENV{PATCH_URL} = $patch_url;
         local $ENV{PR_NUMBER} = $pr_number;
 
@@ -201,7 +201,7 @@ app->minion->add_task(
             }
         );
 
-        lock_store \%shared_data, path(WORKDIR, SHARED_DATA);
+        lock_store \%shared_data, path( WORKDIR, SHARED_DATA );
 
         $job->app->log->debug(
             "Event: $event_type SHA: $sha [PR#$pr_number] $state - Build finished"
@@ -214,7 +214,7 @@ helper build_data => sub {
     my ( $c, $id ) = @_;
     my $shared_data;
     local ( $!, $@ );
-    eval { $shared_data = lock_retrieve( WORKDIR . SHARED_DATA ); };
+    eval { $shared_data = lock_retrieve( path( WORKDIR, SHARED_DATA ) ); };
 
     return $c->$cb( $@ || $!, $shared_data->{$id} );
 };
