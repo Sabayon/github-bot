@@ -79,6 +79,10 @@ app->minion->add_task(
         my $git_repo  = $payload->{$event_type}->{base}->{repo}->{name};
         my $git_repo_user =
             $payload->{$event_type}->{base}->{repo}->{owner}->{login};
+        my $details_msg =
+            BASE_URL
+            ? " - check out the [details](" . BASE_URL . "/build/$sha)"
+            : " - Don't bother searching a detail url, i don't have it for you";
 
         return
             unless PUBLIC
@@ -123,11 +127,7 @@ app->minion->add_task(
         my $comment = $issues->create_comment(
             $pr_number,
             {   body => $pending_messages[ rand @pending_messages ]
-                    . (
-                    BASE_URL
-                    ? " check out the [details](" . BASE_URL . "/build/$sha)"
-                    : ()
-                    )
+                    . $details_msg
             }
         );
 
@@ -178,16 +178,8 @@ app->minion->add_task(
             : $success_messages[ rand @success_messages ];
 
         # Update comment to reflect build status.
-        $comment = $issues->update_comment(
-            $comment->{id},
-            {   body => $msg
-                    . (
-                    BASE_URL
-                    ? " check out the [details](" . BASE_URL . "/build/$sha)"
-                    : ()
-                    )
-            }
-        );
+        $comment = $issues->update_comment( $comment->{id},
+            { body => $msg . $details_msg } );
 
         # Update the GH status relative to the SHA
         $status = $repos->create_status(
