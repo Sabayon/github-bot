@@ -18,6 +18,7 @@ RUN equo up && equo u && equo i dev-perl/App-cpanminus \
 RUN cpanm Mojolicious \
                    Net::GitHub \
                    Mojolicious::Plugin::Minion \
+                   Mojolicious::Plugin::Directory \
                    Minion::Backend::Storable \
                    Minion \
                    Mojolicious::Plugin::AssetPack \

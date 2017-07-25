@@ -4,6 +4,7 @@ use Mojolicious::Lite;
 use Mojo::JSON qw(decode_json encode_json);
 use Net::GitHub;
 use Mojolicious::Plugin::Minion;
+use Mojolicious::Plugin::Directory;
 use Minion::Backend::Storable;
 use Minion;
 use Mojolicious::Plugin::AssetPack;
@@ -12,14 +13,22 @@ use Storable qw(lock_store lock_nstore lock_retrieve);
 use Git::Sub qw(clone tag push);
 use Mojo::File qw(tempdir path);
 use Cwd;
+use Data::Dumper;
 
-use constant GH_TOKEN         => $ENV{GH_TOKEN};
-use constant CONTEXT          => $ENV{GH_CONTEXT} || "package build";
-use constant BASE_URL         => $ENV{BASE_URL};
-use constant WORKDIR          => $ENV{WORK_DIRECTORY} || "./";
-use constant MINION_DATA      => $ENV{MINION_DATA} || "minion.data";
-use constant SHARED_DATA      => $ENV{SHARED_DATA} || "shared_data";
-use constant BUILD_SCRIPT     => $ENV{BUILD_SCRIPT} || "./test_ci.sh";
+use constant DEBUG => $ENV{DEBUG} // 0;
+use constant GH_TOKEN     => $ENV{GH_TOKEN};
+use constant CONTEXT      => $ENV{GH_CONTEXT} || "package build";
+use constant BASE_URL     => $ENV{BASE_URL};
+use constant WORKDIR      => $ENV{WORK_DIRECTORY} || cwd;
+use constant MINION_DATA  => $ENV{MINION_DATA} || "minion.data";
+use constant SHARED_DATA  => $ENV{SHARED_DATA} || "shared_data";
+use constant BUILD_SCRIPT => $ENV{BUILD_SCRIPT} || "./test_ci.sh";
+use constant MESSAGE_FILE => $ENV{MESSAGE_FILE} || "MESSAGE";
+
+use constant ROOTDIR_STATIC_FILES => $ENV{ROOTDIR_STATIC_FILES}
+    || join( "/", WORKDIR, "static" );
+use constant ARTIFACTS_FOLDER => $ENV{ARTIFACTS_FOLDER} || "artifacts";
+
 use constant GH_ALLOWED_USERS => $ENV{GH_ALLOWED_USERS};
 use constant GH_ALLOWED_REPOS => $ENV{GH_ALLOWED_REPOS};
 use constant PUBLIC           => 1;
@@ -44,6 +53,9 @@ my %allowed_users;
 @allowed_repo{ split( /\s/, GH_ALLOWED_REPOS ) }++ if !!GH_ALLOWED_REPOS;
 @allowed_users{ split( /\s/, GH_ALLOWED_USERS ) }++ if !!GH_ALLOWED_USERS;
 
+#app->static->paths->[0] = path(ROOTDIR_STATIC_FILES)->make_path;
+plugin Directory => { root => path(ROOTDIR_STATIC_FILES)->make_path };
+
 plugin AssetPack =>
     { pipes => [qw(Less Sass Css CoffeeScript Riotjs JavaScript Combine)] };
 
@@ -62,6 +74,7 @@ app->asset->process(
 );
 
 app->defaults( title => "Sabayon buildbot" );
+app->log->level( DEBUG ? 'debug' : 'info' );
 
 # Main task that execute our custom BUILD_SCRIPT
 app->minion->add_task(
@@ -89,7 +102,7 @@ app->minion->add_task(
             || ( $allowed_users{$git_repo_user} && $allowed_repo{$git_repo} );
 
         $job->app->log->info(
-            "Event: $event_type SHA: $sha [PR#$pr_number] - Build start");
+            "Event: $event_type SHA: $sha [PR#$pr_number] - Build received");
 
         my $github = Net::GitHub->new( access_token => GH_TOKEN )
             or $job->app->log->debug("Could not create Net::GitHub object");
@@ -101,12 +114,15 @@ app->minion->add_task(
 
         my @statuses = $repos->list_statuses($sha);
 
-        # Don't run if some other worker picked up the job
+        # # Don't run if some other worker picked up the job
         return
                if @statuses > 0
             && $statuses[0]->{context} eq CONTEXT
             && $statuses[0]->{state} eq "pending";
 
+        # XXX: Security, Return also if changed file is just the BUILD_SCRIPT
+        $job->app->log->info(
+            "Event: $event_type SHA: $sha [PR#$pr_number] - Build start");
         my %shared_data;
 
         # update github status.
@@ -143,17 +159,25 @@ app->minion->add_task(
 
         chdir($workdir);
         git::clone $git_url;
+        my $build_dir = path( $workdir, $git_repo );
 
-        chdir( path( $workdir, $git_repo ) );
+        chdir($build_dir);
+        $job->app->log->debug("Fetching PR in $build_dir");
+
         git::fetch "origin", "pull/$pr_number/head:CI_test";
         git::checkout "CI_test";
 
-        local $ENV{GH_USER}   = $git_repo_user;
-        local $ENV{GH_REPO}   = $git_repo;
-        local $ENV{BASE_SHA}  = $base_sha;
-        local $ENV{SHA}       = $sha;
-        local $ENV{PATCH_URL} = $patch_url;
-        local $ENV{PR_NUMBER} = $pr_number;
+        local $ENV{GH_USER}          = $git_repo_user;
+        local $ENV{GH_REPO}          = $git_repo;
+        local $ENV{BASE_SHA}         = $base_sha;
+        local $ENV{SHA}              = $sha;
+        local $ENV{PATCH_URL}        = $patch_url;
+        local $ENV{PR_NUMBER}        = $pr_number;
+        local $ENV{ARTIFACTS_FOLDER} = ARTIFACTS_FOLDER;
+        local $ENV{MESSAGE_FILE}     = MESSAGE_FILE;
+        local $ENV{GH_TOKEN};
+
+        $job->app->log->debug( "Exposed environment " . `env` );
 
         eval {
             @output =
@@ -164,6 +188,33 @@ app->minion->add_task(
             if $@;    # Collect (might-be) errors
 
         chdir($current_dir);
+        $job->app->log->debug("Checking for artifacts in $current_dir");
+
+        my $asset = path( $build_dir, ARTIFACTS_FOLDER );
+        if ( -d $asset ) {
+            $job->app->log->debug("Found asset: $asset");
+            my $dest = path( ROOTDIR_STATIC_FILES, $sha )->make_path;
+            $job->app->log->debug("Copying $asset to $dest");
+            system("cp -rfv $asset $dest");
+
+# this makes /sha/ARTIFACTS_FOLDER accessible as static. (e.g. /a2cb1/artifacts )
+            $shared_data{$sha}{asset} = $dest->to_string;
+
+# this makes /sha/ARTIFACTS_FOLDER accessible as static. (e.g. /a2cb1/artifacts )
+#$shared_data{$sha}{asset} = $asset->copy_to(path(ROOTDIR_STATIC_FILES,$sha)->make_path)->to_string;
+        }
+
+        # we got a message?
+        my $msg = path( $build_dir, ARTIFACTS_FOLDER, MESSAGE_FILE );
+        if ( -e $msg ) {
+            $shared_data{$sha}{message} = $msg->slurp;
+            $details_msg .= " " . $shared_data{$sha}{message};
+
+            $job->app->log->debug(
+                "Build message: " . $shared_data{$sha}{message} );
+        }
+
+        $job->app->log->debug("Cleanup $workdir");
         path($workdir)->remove_tree;
 
         my $state = $return != 0 ? "failure" : "success";
@@ -176,6 +227,8 @@ app->minion->add_task(
               $state eq "failure"
             ? $failure_messages[ rand @failure_messages ]
             : $success_messages[ rand @success_messages ];
+        $job->app->log->debug( "Saved build status for '$sha' : "
+                . Dumper( $shared_data{$sha} ) );
 
         # Update comment to reflect build status.
         $comment = $issues->update_comment( $comment->{id},
