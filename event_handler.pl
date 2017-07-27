@@ -29,9 +29,10 @@ use constant ROOTDIR_STATIC_FILES => $ENV{ROOTDIR_STATIC_FILES}
     || join( "/", WORKDIR, "static" );
 use constant ARTIFACTS_FOLDER => $ENV{ARTIFACTS_FOLDER} || "artifacts";
 
-use constant GH_ALLOWED_USERS => $ENV{GH_ALLOWED_USERS};
-use constant GH_ALLOWED_REPOS => $ENV{GH_ALLOWED_REPOS};
-use constant PUBLIC           => 1;
+use constant GH_ALLOWED_USERS    => $ENV{GH_ALLOWED_USERS};
+use constant GH_ALLOWED_REPOS    => $ENV{GH_ALLOWED_REPOS};
+use constant PUBLIC              => 1;
+use constant AUTOINDEX_ARTIFACTS => $ENV{AUTOINDEX} || 0;
 
 die "You need to pass GH_TOKEN by env"
     unless GH_TOKEN;
@@ -53,8 +54,13 @@ my %allowed_users;
 @allowed_repo{ split( /\s/, GH_ALLOWED_REPOS ) }++ if !!GH_ALLOWED_REPOS;
 @allowed_users{ split( /\s/, GH_ALLOWED_USERS ) }++ if !!GH_ALLOWED_USERS;
 
-#app->static->paths->[0] = path(ROOTDIR_STATIC_FILES)->make_path;
-plugin Directory => { root => path(ROOTDIR_STATIC_FILES)->make_path };
+# Could be feeded to plugin Directory, but i don't see the reason to load it if we do not need it
+if (AUTOINDEX_ARTIFACTS) {
+    plugin Directory => { root => path(ROOTDIR_STATIC_FILES)->make_path };
+}
+else {
+    app->static->paths->[0] = path(ROOTDIR_STATIC_FILES)->make_path;
+}
 
 plugin AssetPack =>
     { pipes => [qw(Less Sass Css CoffeeScript Riotjs JavaScript Combine)] };
