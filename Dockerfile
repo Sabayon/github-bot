@@ -6,16 +6,20 @@ MAINTAINER mudler <mudler@sabayonlinux.org>
 ENV LC_ALL=en_US.UTF-8
 ENV ACCEPT_LICENSE=*
 
-RUN equo up && equo u && equo i dev-perl/App-cpanminus \
+RUN equo repo enable sabayon-limbo && equo up
+RUN equo u && equo i dev-perl/App-cpanminus \
 				dev-perl/Net-SSLeay \
 				dev-perl/libwww-perl \
 				dev-perl/Moo \
+				dev-perl/JavaScript-Minifier \
+				dev-perl/CSS-Minifier \
 				dev-perl/Sereal-Decoder \
 				dev-perl/Sereal-Encoder \
 				app-emulation/docker \
+				dev-perl/JavaScript-Minifier-XS \
 				dev-vcs/git
 
-RUN cpanm Mojolicious \
+RUN cpanm -n Mojolicious \
                    Net::GitHub \
                    Mojolicious::Plugin::Minion \
                    Mojolicious::Plugin::Directory \
