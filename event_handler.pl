@@ -24,6 +24,7 @@ use constant MINION_DATA  => $ENV{MINION_DATA} || "minion.data";
 use constant SHARED_DATA  => $ENV{SHARED_DATA} || "shared_data";
 use constant BUILD_SCRIPT => $ENV{BUILD_SCRIPT} || "./test_ci.sh";
 use constant MESSAGE_FILE => $ENV{MESSAGE_FILE} || "MESSAGE";
+use constant FA_URL       => $ENV{FA_URL};
 
 use constant ROOTDIR_STATIC_FILES => $ENV{ROOTDIR_STATIC_FILES}
     || join( "/", WORKDIR, "static" );
@@ -62,8 +63,7 @@ else {
     app->static->paths->[0] = path(ROOTDIR_STATIC_FILES)->make_path;
 }
 
-plugin AssetPack =>
-    { pipes => [qw(Less Sass Css CoffeeScript Riotjs JavaScript Combine)] };
+plugin AssetPack => { pipes => [qw(Css JavaScript)] };
 
 plugin Minion => { Storable => path( WORKDIR, MINION_DATA ) };
 
@@ -76,6 +76,7 @@ app->asset->process(
 app->asset->process(
     'app.js' => (
         'https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/js/bootstrap.min.js',
+        (FA_URL) x !!(FA_URL)
     )
 );
 
@@ -204,7 +205,8 @@ app->minion->add_task(
             system("cp -rfv $asset $dest");
 
 # this makes /sha/ARTIFACTS_FOLDER accessible as static. (e.g. /a2cb1/artifacts )
-            $shared_data{$sha}{asset} = $dest->to_string;
+            $shared_data{$sha}{asset}     = $dest->to_string;
+            $shared_data{$sha}{asset_url} = BASE_URL . "/$sha/artifacts";
 
 # this makes /sha/ARTIFACTS_FOLDER accessible as static. (e.g. /a2cb1/artifacts )
 #$shared_data{$sha}{asset} = $asset->copy_to(path(ROOTDIR_STATIC_FILES,$sha)->make_path)->to_string;
@@ -321,115 +323,21 @@ __DATA__
   %= asset 'app.js'
   %= asset 'app.css'
   %= stylesheet begin
-  .bs-calltoaction{
-    position: relative;
-    width:auto;
-    padding: 15px 25px;
-    border: 1px solid black;
-    margin-top: 10px;
-    margin-bottom: 10px;
-    border-radius: 5px;
-}
-
-    .bs-calltoaction > .row{
-        display:table;
-        width: calc(100% + 30px);
-    }
-
-        .bs-calltoaction > .row > [class^="col-"],
-        .bs-calltoaction > .row > [class*=" col-"]{
-            float:none;
-            display:table-cell;
-            vertical-align:middle;
-        }
-
-            .cta-contents{
-                padding-top: 10px;
-                padding-bottom: 10px;
-            }
-
-                .cta-title{
-                    margin: 0 auto 15px;
-                    padding: 0;
-                }
-
-                .cta-desc{
-                    padding: 0;
-                }
-
-                .cta-desc p:last-child{
-                    margin-bottom: 0;
-                }
-
-            .cta-button{
-                padding-top: 10px;
-                padding-bottom: 10px;
-            }
-
-@media (max-width: 991px){
-    .bs-calltoaction > .row{
-        display:block;
-        width: auto;
-    }
-
-        .bs-calltoaction > .row > [class^="col-"],
-        .bs-calltoaction > .row > [class*=" col-"]{
-            float:none;
-            display:block;
-            vertical-align:middle;
-            position: relative;
-        }
-
-        .cta-contents{
-            text-align: center;
-        }
-}
+  .alert {
+      display: inline-block;
+    margin: auto; display: table;
+  }
 
 
+  body, html {
+      background-image: url(https://www.sabayon.org/img/intro-bg.jpg);
+      background-attachment: fixed;
+      background-size: cover;
+  }
 
-.bs-calltoaction.bs-calltoaction-default{
-    color: #333;
-    background-color: #fff;
-    border-color: #ccc;
-}
-
-.bs-calltoaction.bs-calltoaction-primary{
-    color: #fff;
-    background-color: #337ab7;
-    border-color: #2e6da4;
-}
-
-.bs-calltoaction.bs-calltoaction-info{
-    color: #fff;
-    background-color: #5bc0de;
-    border-color: #46b8da;
-}
-
-.bs-calltoaction.bs-calltoaction-success{
-    color: #fff;
-    background-color: #5cb85c;
-    border-color: #4cae4c;
-}
-
-.bs-calltoaction.bs-calltoaction-warning{
-    color: #fff;
-    background-color: #f0ad4e;
-    border-color: #eea236;
-}
-
-.bs-calltoaction.bs-calltoaction-danger{
-    color: #fff;
-    background-color: #d9534f;
-    border-color: #d43f3a;
-}
-
-.bs-calltoaction.bs-calltoaction-primary .cta-button .btn,
-.bs-calltoaction.bs-calltoaction-info .cta-button .btn,
-.bs-calltoaction.bs-calltoaction-success .cta-button .btn,
-.bs-calltoaction.bs-calltoaction-warning .cta-button .btn,
-.bs-calltoaction.bs-calltoaction-danger .cta-button .btn{
-    border-color:#fff;
-}
+  .vertical-offset-100 {
+      padding-top: 100px;
+  }
 % end
 </head>
 
@@ -440,28 +348,79 @@ __DATA__
 </html>
 @@ build.html.ep
 
-<div class="container">
-            <div class="col-sm-12">
-
-                <div class="bs-calltoaction bs-calltoaction-<%= param('build_data')->{status}%>">
-                    <div class="row">
-                        <div class="col-md-9 cta-contents">
-                            <h1 class="cta-title">Build status: <%= param('build_data')->{status}%></h1>
-                            <div class="cta-desc">
-                            % foreach my $line (@{param('build_data')->{output}}) {
-                                <p><%= $line %></p>
-                                % }
-                            </div>
-                        </div>
-                      <!--
-                          <div class="col-md-3 cta-button">
-                            <a href="#" class="btn btn-lg btn-block btn-default">
-                            Dismiss
-                              </a>
-                        </div>
-                        -->
-                     </div>
+<div class="container vertical-offset-100">
+    <div class="">
+        <div class="text-center">
+            <div class="panel-body">
+                <div class="panel panel-default">
+                    <table class="table table-hover table-bordered table-striped center-table text-center">
+                        <thead>
+                            <tr>
+                                <th><i class="fa fa-bar-chart"></i> Status</th>
+                                <th><i class="fa fa-download"></i> Artifacts</th>
+                                <th><i class="fa fa-sign-out"></i> Exit status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><i class='fa fa-<%= param('build_data')->{status} eq "failure" ? "ban" : param('build_data')->{status} eq "building" ? "spinner" : "check" %>' aria-hidden="true"></i> <%= param('build_data')->{status}%></td>
+                                <td>
+                                <% if (param('build_data')->{asset_url}){ %>
+                                  <a target="_blank" href="<%= param('build_data')->{asset_url} %>">Yes (Click to visit URL)</a>
+                                <% } else { %>
+                                  No
+                                <% } %>
+                                </td>
+                                <td><%= param('build_data')->{exit_status} ? param('build_data')->{exit_status} : "none" %></td>
+                            </tr>
+                            <tr class=""></tr>
+                        </tbody>
+                    </table>
                 </div>
-
             </div>
         </div>
+    </div>
+    <div class="col-md-3 pull-md-left sidebar">
+        <div class="panel panel-default">
+            <div class="panel-heading"><i class="fa fa-car" aria-hidden="true"></i>  <strong class="">Useful Links</strong>
+
+            </div>
+            <div class="list-group">
+<a href="https://www.sabayon.org/" class="list-group-item"><i class="fa fa-external-link" aria-hidden="true"></i> Sabayon Linux</a>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-9">
+        <% if (param('build_data')->{error}){ %>
+        <div class="panel panel-default">
+            <div class="panel-heading"><i class="fa fa-exclamation-circle"></i>  <strong class="">Errors</strong>
+
+            </div>
+            <div class="panel-body">
+              <%= param('build_data')->{error} %>
+            </div>
+        </div>
+        <% } %>
+        <div class="panel panel-default">
+            <div class="panel-heading"><i class="fa fa-info-circle"></i>  <strong class="">Information</strong>
+
+            </div>
+            <div class="panel-body">
+            % foreach my $line (@{param('build_data')->{output}}) {
+                <p><%= $line %></p>
+                % }
+            </div>
+        </div>
+        <% if (param('build_data')->{message}){ %>
+        <div class="panel panel-default">
+            <div class="panel-heading"><i class="fa fa-info-circle"></i>  <strong class="">Message</strong>
+
+            </div>
+            <div class="panel-body">
+              <%= param('build_data')->{message} %>
+            </div>
+        </div>
+        <% } %>
+    </div>
+    <div class=""></div>
+</div>
