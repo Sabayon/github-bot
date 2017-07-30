@@ -32,7 +32,7 @@ use constant ARTIFACTS_FOLDER => $ENV{ARTIFACTS_FOLDER} || "artifacts";
 
 use constant GH_ALLOWED_USERS    => $ENV{GH_ALLOWED_USERS};
 use constant GH_ALLOWED_REPOS    => $ENV{GH_ALLOWED_REPOS};
-use constant PUBLIC              => 1;
+use constant PUBLIC              => $ENV{PUBLIC} // 1;
 use constant AUTOINDEX_ARTIFACTS => $ENV{AUTOINDEX} || 0;
 
 die "You need to pass GH_TOKEN by env"
@@ -143,6 +143,7 @@ app->minion->add_task(
 
         $shared_data{$sha}{gh_state} = "pending";
         $shared_data{$sha}{status}   = "building";
+        $shared_data{$sha}{start_time}   = time;
 
         lock_store \%shared_data, path( WORKDIR, SHARED_DATA );
 
@@ -186,6 +187,7 @@ app->minion->add_task(
 
         $job->app->log->debug( "Exposed environment " . `env` );
 
+        system("chmod +x $script");
         eval {
             @output =
                 qx(echo '$json_payload' | $script $git_repo_user $git_repo $base_sha $sha $patch_url $pr_number 2>&1);
@@ -363,7 +365,11 @@ __DATA__
                         </thead>
                         <tbody>
                             <tr>
-                                <td><i class='fa fa-<%= param('build_data')->{status} eq "failure" ? "ban" : param('build_data')->{status} eq "building" ? "spinner" : "check" %>' aria-hidden="true"></i> <%= param('build_data')->{status}%></td>
+                                <td>
+                                <i class='fa fa-<%= param('build_data')->{status} eq "failure" ? "ban" : param('build_data')->{status} eq "building" ? "spinner" : "check" %>' aria-hidden="true"></i>
+                                 <%= param('build_data')->{status} %>
+                                 <i class="fa fa-clock-o"></i> <%= param('build_data')->{start_time} ? (time - param('build_data')->{start_time}) : "0" %> s
+                                 </td>
                                 <td>
                                 <% if (param('build_data')->{asset_url}){ %>
                                   <a target="_blank" href="<%= param('build_data')->{asset_url} %>">Yes (Click to visit URL)</a>

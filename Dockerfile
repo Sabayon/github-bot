@@ -32,7 +32,6 @@ RUN cpanm -n Mojolicious \
                    Mojo::File && mkdir /app
 
 ADD event_handler.pl /app/app.pl
-ADD test_ci.sh /app/test_ci.sh
 
 # Set environment variables.
 ENV HOME /app
