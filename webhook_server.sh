@@ -10,7 +10,7 @@ echo "Building images and starting them"
 
 type ngrok >/dev/null 2>&1 && [ -n "$NGROK" ] && {
   pkill -9 ngrok
-  nohup ngrok http 80 --log=info --log=stdout > ngrok.log &
+  nohup ngrok http 127.0.0.1:80 --log=info --log=stdout > ngrok.log &
   sleep 5
 
   export BASE_URL=$(curl -s http://127.0.0.1:4040/api/tunnels | \
