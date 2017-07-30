@@ -1,4 +1,4 @@
-# [![Docker Build Statu](https://img.shields.io/docker/build/sabayon/github-bot.svg?style=flat-square)](sabayon/github-bot) Sabayon Build Bot
+# [![Docker Build Status](https://img.shields.io/docker/build/sabayon/github-bot.svg?style=flat-square)](https://hub.docker.com/r/sabayon/github-bot/) Sabayon Build Bot
 
 
 # Deploy
