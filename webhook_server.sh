@@ -1,12 +1,14 @@
 #!/bin/bash
 
+export ENVFILE="${ENVFILE:-webhook_env}"
+
+[ ! -f $ENVFILE ] && echo "You need to have a $ENVFILE enviroment file" && exit 1
+
 echo "Building images and starting them"
 
-[ ! -f webhook_env ] && echo "You need to have a webhook_env enviroment file" && exit 1
+[ -n "$BUILD_IMAGE" ] && docker build -t sabayon/github-bot .
 
-docker build -t sabayon/github-bot .
-
-type ngrok >/dev/null 2>&1 && {
+type ngrok >/dev/null 2>&1 && [ -n "$NGROK" ] && {
   pkill -9 ngrok
   nohup ngrok http 80 --log=info --log=stdout > ngrok.log &
   sleep 5
@@ -31,7 +33,7 @@ docker create \
                             -p 80:3000 \
                             --volumes-from sabayon-github-bot-shared \
                             --env BASE_URL \
-                            --env-file webhook_env \
+                            --env-file $ENVFILE \
                             --restart always \
                             sabayon/github-bot:latest \
                             prefork -m production || \
@@ -39,7 +41,7 @@ docker create \
                             --name sabayon-github-bot-master \
                             -p 80:3000 \
                             --volumes-from sabayon-github-bot-shared \
-                            --env-file webhook_env \
+                            --env-file $ENVFILE \
                             --restart always \
                             sabayon/github-bot:latest \
                             prefork -m production
@@ -47,7 +49,7 @@ docker create \
 docker run -tid -v /var/run/docker.sock:/var/run/docker.sock \
               --name sabayon-github-bot-worker1 \
               --volumes-from sabayon-github-bot-shared \
-              --env-file webhook_env \
+              --env-file $ENVFILE \
               --restart always \
               sabayon/github-bot:latest \
               minion worker
