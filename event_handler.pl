@@ -75,7 +75,9 @@ app->asset->process(
 );
 app->asset->process(
     'app.js' => (
+        'https://code.jquery.com/jquery-3.2.1.min.js',
         'https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/js/bootstrap.min.js',
+        'https://raw.githubusercontent.com/drudru/ansi_up/master/ansi_up.js',
         (FA_URL) x !!(FA_URL)
     )
 );
@@ -322,6 +324,7 @@ __DATA__
   <title><%= title %></title>
   <meta name="description" content="Sabayon build bot report">
   <meta name="viewport" content="width=device-width, initial-scale=0.9" />
+  %= content 'head'
   %= asset 'app.js'
   %= asset 'app.css'
   %= stylesheet begin
@@ -349,7 +352,23 @@ __DATA__
 </body>
 </html>
 @@ build.html.ep
+<% if (param('build_data')->{status} and param('build_data')->{status} eq "building") { %>
+%  content_for message => begin
+   <meta http-equiv="refresh" content="3" >
+% end
+<% } else { %>
+<script type="text/javascript">
+$(function() {
+      var ansi_up = new AnsiUp;
 
+      var html = ansi_up.ansi_to_html(document.getElementById("build_output").innerHTML);
+
+      var cdiv = document.getElementById("build_output");
+
+      cdiv.innerHTML = html;
+});
+</script>
+<% } %>
 <div class="container vertical-offset-100">
     <div class="">
         <div class="text-center">
@@ -359,7 +378,9 @@ __DATA__
                         <thead>
                             <tr>
                                 <th><i class="fa fa-bar-chart"></i> Status</th>
+                              <% if (param('build_data')->{asset_url}){ %>
                                 <th><i class="fa fa-download"></i> Artifacts</th>
+                              <% } %>
                                 <th><i class="fa fa-sign-out"></i> Exit status</th>
                             </tr>
                         </thead>
@@ -370,14 +391,12 @@ __DATA__
                                  <%= param('build_data')->{status} %>
                                  <i class="fa fa-clock-o"></i> <%= param('build_data')->{start_time} ? (time - param('build_data')->{start_time}) : "0" %> s
                                  </td>
-                                <td>
                                 <% if (param('build_data')->{asset_url}){ %>
+                                <td>
                                   <a target="_blank" href="<%= param('build_data')->{asset_url} %>">Yes (Click to visit URL)</a>
-                                <% } else { %>
-                                  No
-                                <% } %>
                                 </td>
-                                <td><%= param('build_data')->{exit_status} ? param('build_data')->{exit_status} : "none" %></td>
+                                <% } %>
+                                <td><%= param('build_data')->{exit_status} ? param('build_data')->{exit_status} : "----" %></td>
                             </tr>
                             <tr class=""></tr>
                         </tbody>
@@ -389,7 +408,6 @@ __DATA__
     <div class="col-md-3 pull-md-left sidebar">
         <div class="panel panel-default">
             <div class="panel-heading"><i class="fa fa-car" aria-hidden="true"></i>  <strong class="">Useful Links</strong>
-
             </div>
             <div class="list-group">
 <a href="https://www.sabayon.org/" class="list-group-item"><i class="fa fa-external-link" aria-hidden="true"></i> Sabayon Linux</a>
@@ -407,16 +425,18 @@ __DATA__
             </div>
         </div>
         <% } %>
+        <% if (param('build_data')->{output}){ %>
         <div class="panel panel-default">
             <div class="panel-heading"><i class="fa fa-info-circle"></i>  <strong class="">Information</strong>
 
             </div>
-            <div class="panel-body">
+            <div class="panel-body" id="build_output">
             % foreach my $line (@{param('build_data')->{output}}) {
                 <p><%= $line %></p>
                 % }
             </div>
         </div>
+        <% } %>
         <% if (param('build_data')->{message}){ %>
         <div class="panel panel-default">
             <div class="panel-heading"><i class="fa fa-info-circle"></i>  <strong class="">Message</strong>
@@ -429,4 +449,31 @@ __DATA__
         <% } %>
     </div>
     <div class=""></div>
+</div>
+
+@@ not_found.html.ep
+% layout 'result', title => "Page not found";
+<div class="container vertical-offset-100">
+  <div class="panel panel-default">
+      <div class="panel-heading"><i class="fa fa-info-circle"></i>  <strong class="">Information</strong>
+
+      </div>
+      <div class="panel-body">
+        Page not found!
+      </div>
+  </div>
+</div>
+@@ exception.production.html.ep
+% layout 'result', title => "Server error";
+<div class="container vertical-offset-100">
+  <div class="panel panel-default">
+      <div class="panel-heading"><i class="fa fa-info-circle"></i>  <strong class="">Exception</strong>
+
+      </div>
+      <div class="panel-body">
+      <p><%= $exception->message %></p>
+      <h1>Stash</h1>
+      <pre><%= dumper $snapshot %></pre>
+      </div>
+  </div>
 </div>
