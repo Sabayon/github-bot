@@ -35,6 +35,8 @@ use constant GH_ALLOWED_REPOS    => $ENV{GH_ALLOWED_REPOS};
 use constant PUBLIC              => $ENV{PUBLIC} // 1;
 use constant AUTOINDEX_ARTIFACTS => $ENV{AUTOINDEX} || 0;
 
+use constant PAGE_TITLE => $ENV{PAGE_TITLE} || "Sabayon buildbot";
+
 die "You need to pass GH_TOKEN by env"
     unless GH_TOKEN;
 
@@ -82,7 +84,7 @@ app->asset->process(
     )
 );
 
-app->defaults( title => "Sabayon buildbot" );
+app->defaults( title => PAGE_TITLE );
 app->log->level( DEBUG ? 'debug' : 'info' );
 
 # Main task that execute our custom BUILD_SCRIPT
@@ -143,9 +145,9 @@ app->minion->add_task(
             }
         );
 
-        $shared_data{$sha}{gh_state} = "pending";
-        $shared_data{$sha}{status}   = "building";
-        $shared_data{$sha}{start_time}   = time;
+        $shared_data{$sha}{gh_state}   = "pending";
+        $shared_data{$sha}{status}     = "building";
+        $shared_data{$sha}{start_time} = time;
 
         lock_store \%shared_data, path( WORKDIR, SHARED_DATA );
 
