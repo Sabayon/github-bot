@@ -173,7 +173,7 @@ app->minion->add_task(
         git::clone $git_url;
         my $build_dir = path( $workdir, $git_repo );
 
-        chdir($build_dir);
+        chdir($build_dir) if -d $build_dir;
         $job->app->log->debug("Fetching PR in $build_dir");
 
         git::fetch "origin", "pull/$pr_number/head:CI_test";
@@ -190,8 +190,7 @@ app->minion->add_task(
         local $ENV{GH_TOKEN};
 
         $job->app->log->debug( "Exposed environment " . `env` );
-
-        system("chmod +x $script");
+        system("chmod +x $script") if -e $script;
         eval {
             @output =
                 qx(echo '$json_payload' | $script $git_repo_user $git_repo $base_sha $sha $patch_url $pr_number 2>&1);
