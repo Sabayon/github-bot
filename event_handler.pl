@@ -14,18 +14,22 @@ use Git::Sub qw(clone tag push);
 use Mojo::File qw(tempdir path);
 use Cwd;
 use Data::Dumper;
+use Mojo::IOLoop::ReadWriteProcess qw(process);
+use UUID::Tiny ':std';
 
 use constant DEBUG => $ENV{DEBUG} // 0;
-use constant GH_TOKEN     => $ENV{GH_TOKEN};
-use constant CONTEXT      => $ENV{GH_CONTEXT} || "package build";
-use constant BASE_URL     => $ENV{BASE_URL};
-use constant WORKDIR      => $ENV{WORK_DIRECTORY} || cwd;
-use constant MINION_DATA  => $ENV{MINION_DATA} || "minion.data";
-use constant SHARED_DATA  => $ENV{SHARED_DATA} || "shared_data";
-use constant BUILD_SCRIPT => $ENV{BUILD_SCRIPT} || "./test_ci.sh";
-use constant MESSAGE_FILE => $ENV{MESSAGE_FILE} || "MESSAGE";
-use constant FA_URL       => $ENV{FA_URL};
-
+use constant GH_TOKEN        => $ENV{GH_TOKEN};
+use constant CONTEXT         => $ENV{GH_CONTEXT} || "package build";
+use constant BASE_URL        => $ENV{BASE_URL} || "127.0.0.1";
+use constant WORKDIR         => $ENV{WORK_DIRECTORY} || cwd;
+use constant MINION_DATA     => $ENV{MINION_DATA} || "minion.data";
+use constant SHARED_DATA     => $ENV{SHARED_DATA} || "shared_data";
+use constant BUILD_SCRIPT    => $ENV{BUILD_SCRIPT} || "./test_ci.sh";
+use constant MESSAGE_FILE    => $ENV{MESSAGE_FILE} || "MESSAGE";
+use constant FA_URL          => $ENV{FA_URL};
+use constant AUTH_TOKEN      => $ENV{AUTH_TOKEN} || 'MyBygSecret';
+use constant HOST_SHARED_DIR => $ENV{HOST_SHARED_DIR} || '/tmp/container';
+use constant KEY_DIR         => $ENV{KEY_DIR} || WORKDIR . "/keys";
 use constant ROOTDIR_STATIC_FILES => $ENV{ROOTDIR_STATIC_FILES}
     || join( "/", WORKDIR, "static" );
 use constant ARTIFACTS_FOLDER => $ENV{ARTIFACTS_FOLDER} || "artifacts";
@@ -218,9 +222,9 @@ app->minion->add_task(
         }
 
         # we got a message?
-        my $msg = path( $build_dir, ARTIFACTS_FOLDER, MESSAGE_FILE );
-        if ( -e $msg ) {
-            $shared_data{$sha}{message} = $msg->slurp;
+        my $msg_file = path( $build_dir, ARTIFACTS_FOLDER, MESSAGE_FILE );
+        if ( -e $msg_file ) {
+            $shared_data{$sha}{message} = $msg_file->slurp;
             $details_msg .= " " . $shared_data{$sha}{message};
 
             $job->app->log->debug(
@@ -267,6 +271,107 @@ app->minion->add_task(
     }
 );
 
+# Main task that execute our custom BUILD_SCRIPT
+app->minion->add_task(
+    single_build => sub {
+
+        my ( $job, $parameters ) = @_;
+
+        my $current_dir = cwd;
+
+        my $repo      = $parameters->{repo};
+        my $dir       = $parameters->{folder};
+        my $namespace = $parameters->{namespace};
+        my $id        = $parameters->{id};
+
+        my $status_url = BASE_URL . "/job/$id";
+
+        $job->app->log->info("ID $id repo $repo dir $dir - Build received");
+
+        my %shared_data;
+
+        $shared_data{"ci"}{$id}{status}     = "building";
+        $shared_data{"ci"}{$id}{start_time} = time;
+
+        lock_store \%shared_data, path( WORKDIR, SHARED_DATA );
+
+        # Execute the build.
+        # Passing the github data into the process STDIN
+        my @output;
+        my $return;
+        my $workdir = tempdir( DIR => HOST_SHARED_DIR );
+
+        $job->app->log->debug("Working on $workdir");
+
+        chdir($workdir);
+        git::clone $repo, "repo";
+        my $build_dir = path( $workdir, "repo", $dir );
+
+        chdir($build_dir) if -d $build_dir;
+        local $ENV{ARTIFACTS_FOLDER} = ARTIFACTS_FOLDER;
+
+      #local $ENV{GENKEY_PHASE}     = "true";  # key autogen is broken for now
+        system( "cp -rf " . KEY_DIR . " $build_dir/confs" ) if -d KEY_DIR;
+        $job->app->log->debug( "Exposed environment " . `env` );
+
+        my $p = process(
+            execute      => '/usr/bin/sark-buildrepo',
+            separate_err => 0
+        )->start();
+
+        $shared_data{"ci"}{$id}{pid} = $p->pid;
+        lock_store \%shared_data, path( WORKDIR, SHARED_DATA );
+        $shared_data{"ci"}{$id}{output} = [];
+
+        my $stdout = $p->read_stream;
+        while ( defined( my $line = <$stdout> ) ) {
+            $job->app->log->debug($line);
+            push( @{ $shared_data{"ci"}{$id}{output} }, $line );
+            lock_store \%shared_data,
+                path( WORKDIR, SHARED_DATA );    # potentially distructive
+        }
+
+        push( @{ $shared_data{"ci"}{$id}{output} }, $p->getlines );
+
+        $job->app->log->debug("End output");
+        $p->wait_stop;
+        $return = $p->exit_status;
+        $shared_data{"ci"}{$id}{error} = $p->error->join("\n")
+            and $return = 1
+            if $p->errored;                      # Collect (might-be) errors
+
+        chdir($current_dir);
+        $job->app->log->debug("Checking for artifacts in $current_dir");
+
+        my $asset = path( $build_dir, ARTIFACTS_FOLDER );
+        if ( -d $asset ) {
+            $job->app->log->debug("Found asset: $asset");
+            my $dest = path( ROOTDIR_STATIC_FILES, $namespace )->make_path;
+            $job->app->log->debug("Copying $asset to $dest");
+            system("cp -rfv $asset $dest");
+
+            $shared_data{"ci"}{$id}{asset}     = $dest->to_string;
+            $shared_data{"ci"}{$id}{asset_url} = BASE_URL . "/repo/$id";
+        }
+
+        $job->app->log->debug("Cleanup $workdir");
+        path($workdir)->remove_tree;
+
+        my $state = $return != 0 ? "failure" : "success";
+
+        $shared_data{"ci"}{$id}{return}      = $return;
+        $shared_data{"ci"}{$id}{exit_status} = $return >> 8;
+        $shared_data{"ci"}{$id}{status}      = $state;
+        $shared_data{"ci"}{$id}{output}      = \@output;
+        $job->app->log->debug( "Saved build status for '$id' : "
+                . Dumper( $shared_data{"ci"}{$id} ) );
+
+        lock_store \%shared_data, path( WORKDIR, SHARED_DATA );
+
+        $job->app->log->debug("ID: $id $state - Build finished");
+    }
+);
+
 helper build_data => sub {
     my $cb = pop;
     my ( $c, $id ) = @_;
@@ -275,6 +380,41 @@ helper build_data => sub {
     eval { $shared_data = lock_retrieve( path( WORKDIR, SHARED_DATA ) ); };
 
     return $c->$cb( $@ || $!, $shared_data->{$id} );
+};
+
+helper job_data => sub {
+    my $cb = pop;
+    my ( $c, $id ) = @_;
+    my $shared_data;
+    local ( $!, $@ );
+    eval { $shared_data = lock_retrieve( path( WORKDIR, SHARED_DATA ) ); };
+
+    return $c->$cb( $@ || $!, $shared_data->{ci}->{$id} );
+};
+
+helper list_jobs => sub {
+    my $cb = pop;
+    my ($c) = @_;
+    my $shared_data;
+    local ( $!, $@ );
+    eval { $shared_data = lock_retrieve( path( WORKDIR, SHARED_DATA ) ); };
+    return $c->$cb( $@ || $!, $shared_data->{ci} );
+};
+
+helper stop_job => sub {
+    my $cb = pop;
+    my ( $c, $id ) = @_;
+    my $shared_data;
+    local ( $!, $@ );
+    eval { $shared_data = lock_retrieve( path( WORKDIR, SHARED_DATA ) ); };
+    return $c->$cb( $@ || $!, 0 )
+        unless exists $shared_data->{ci}->{$id}->{pid};
+
+    my $process = process( blocking_stop => 1 )
+        ->pid( $shared_data->{ci}->{$id}->{pid} );
+    $process->stop();
+
+    return $c->$cb( $@ || $!, $process->is_running );
 };
 
 get '/build/:sha' => { layout => 'result' } => sub {
@@ -293,6 +433,86 @@ get '/build/:sha' => { layout => 'result' } => sub {
     );
     },
     'build';
+
+get '/job/:id' => { layout => 'result' } => sub {
+    my $c  = shift;
+    my $id = $c->param('id');
+
+    # Retrieve of build data could be delayed if we are under heavy load.
+    return $c->delay(
+        sub { $c->job_data( $id => shift->begin ) },
+        sub {
+            my $build_data = pop;
+            my ( $delay, $err ) = @_;
+            return $c->reply->not_found
+                unless $build_data;
+            return $c->param( build_data => $build_data )->render;
+        },
+    );
+    },
+    'build';
+
+group {
+
+    # Global logic shared by all routes
+    under sub {
+        my $c = shift;
+        return 1
+            if $c->param('AUTH_TOKEN')
+            && $c->param('AUTH_TOKEN') eq AUTH_TOKEN;
+        $c->render( text => "Invalid token" );
+        return undef;
+    };
+
+    get '/jobs' => { layout => 'result' } => sub {
+        my $c = shift;
+
+        # Retrieve of build data could be delayed if we are under heavy load.
+        return $c->delay(
+            sub { $c->list_jobs( shift->begin ) },
+            sub {
+                my ( $delay, $err, $jobs ) = @_;
+                return $c->reply->not_found
+                    unless $jobs;
+                return $c->param( jobs => $jobs )->render;
+            },
+        );
+        },
+        'list_build';
+
+    post '/build' => sub {
+        my $c          = shift;
+        my $parameters = $c->req->json;
+
+        return $c->render( text => "Invalid parameters" )
+            unless $parameters
+            && $parameters->{repo}
+            && $parameters->{namespace}
+            && $parameters->{folder};
+
+        app->log->debug("Job enqueued");
+        $parameters->{id} = create_uuid_as_string(UUID_RANDOM);
+        app->minion->enqueue( single_build => [$parameters] );
+
+        return $c->render( text => BASE_URL . "/job/" . $parameters->{id} );
+    };
+
+    get '/job/:id/stop' => sub {
+        my $c  = shift;
+        my $id = $c->param('id');
+
+        return $c->delay(
+            sub { $c->stop_job( $id => shift->begin ) },
+            sub {
+                my ( $delay, $err, $done ) = @_;
+                return $c->render( text => "Still running" )
+                    if $done;
+                return $c->render( text => "Stopped" );
+            },
+        );
+    };
+
+};
 
 post '/event_handler' => sub {
     my $c          = shift;
@@ -354,7 +574,7 @@ __DATA__
 </html>
 @@ build.html.ep
 <% if (param('build_data')->{status} and param('build_data')->{status} eq "building") { %>
-%  content_for message => begin
+%  content_for head => begin
    <meta http-equiv="refresh" content="3" >
 % end
 <% } else { %>
@@ -477,4 +697,32 @@ $(function() {
       <pre><%= dumper $snapshot %></pre>
       </div>
   </div>
+</div>
+@@ list_build.html.ep
+%  content_for message => begin
+   <meta http-equiv="refresh" content="3" >
+% end
+<div class="container vertical-offset-100">
+    <div class="col-md-3 pull-md-left sidebar">
+        <div class="panel panel-default">
+            <div class="panel-heading"><i class="fa fa-car" aria-hidden="true"></i>  <strong class="">Useful Links</strong>
+            </div>
+            <div class="list-group">
+<a href="https://www.sabayon.org/" class="list-group-item"><i class="fa fa-external-link" aria-hidden="true"></i> Sabayon Linux</a>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-9">
+        <div class="panel panel-default">
+            <div class="panel-heading"><i class="fa fa-info-circle"></i>  <strong class="">Jobs</strong>
+            </div>
+            <div class="panel-body" id="build_output">
+            % foreach my $line (keys %{ param('jobs') }) {
+                <p><a href="/job/<%= $line %>" target="_blank"><%= $line %></a></p>
+                % }
+            </div>
+        </div>
+
+    </div>
+    <div class=""></div>
 </div>

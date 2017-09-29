@@ -1,6 +1,7 @@
 #!/bin/bash
 
 export ENVFILE="${ENVFILE:-webhook_env}"
+export EXT_PORT="${EXT_PORT:-8080}"
 
 [ ! -f $ENVFILE ] && echo "You need to have a $ENVFILE enviroment file" && exit 1
 
@@ -23,7 +24,7 @@ docker create \
 docker run -tid \
               --name sabayon-github-bot-master \
               --network sabayon-github-bot \
-              -p 8080:3000 \
+              -p $EXT_PORT:3000 \
               --volumes-from sabayon-github-bot-shared \
               --env-file $ENVFILE \
               --restart always \
@@ -34,6 +35,7 @@ docker run -tid -v /var/run/docker.sock:/var/run/docker.sock \
               --name sabayon-github-bot-worker1 \
               --network sabayon-github-bot \
               --volumes-from sabayon-github-bot-shared \
+              -v /tmp/container:/tmp/container/ \
               --env-file $ENVFILE \
               --restart always \
               sabayon/github-bot:latest \
@@ -57,12 +59,12 @@ docker run -tid -v /var/run/docker.sock:/var/run/docker.sock \
           docker stop sabayon-github-bot-master && \
           docker rm sabayon-github-bot-master && \
           docker run -tid --name sabayon-github-bot-master \
-                            -p 3000 --network sabayon-github-bot \
+                            -p $EXT_PORT:3000 --network sabayon-github-bot \
                             --volumes-from sabayon-github-bot-shared \
                             --env BASE_URL \
                             --env-file $ENVFILE \
                             --restart always \
                             sabayon/github-bot:latest \
                             prefork -m production && \
-        echo "Started ngrok tunnel to $BASE_URL" && \
+        echo "Started service to $BASE_URL" && \
         echo "Your webhook url will be: $BASE_URL/event_handler"
