@@ -346,12 +346,14 @@ app->minion->add_task(
         my $asset = path( $build_dir, ARTIFACTS_FOLDER );
         if ( -d $asset ) {
             $job->app->log->debug("Found asset: $asset");
-            my $dest = path( ROOTDIR_STATIC_FILES, $namespace )->make_path;
+            my $dest =
+                path( ROOTDIR_STATIC_FILES, "repo", $namespace )->make_path;
             $job->app->log->debug("Copying $asset to $dest");
             system("cp -rfv $asset $dest");
 
-            $shared_data{"ci"}{$id}{asset}     = $dest->to_string;
-            $shared_data{"ci"}{$id}{asset_url} = BASE_URL . "/repo/$id";
+            $shared_data{"ci"}{$id}{asset} = $dest->to_string;
+            $shared_data{"ci"}{$id}{asset_url} =
+                BASE_URL . "/repo/$namespace";
         }
 
         $job->app->log->debug("Cleanup $workdir");
