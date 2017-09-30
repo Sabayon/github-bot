@@ -354,7 +354,7 @@ app->minion->add_task(
             my $dest =
                 path( ROOTDIR_STATIC_FILES, "repo", $namespace )->make_path;
             $job->app->log->debug("Copying $asset to $dest");
-            system("cp -rfv $asset $dest");
+            system("cp -rf $asset $dest");
 
             $shared_data{"ci"}{$id}{asset}     = $dest->to_string;
             $shared_data{"ci"}{$id}{asset_url} = "/repo/$namespace";
@@ -517,6 +517,22 @@ get '/job/:id/stream_output' => { layout => 'result' } => sub {
     },
     'build';
 
+get '/jobs' => { layout => 'result' } => sub {
+    my $c = shift;
+
+    # Retrieve of build data could be delayed if we are under heavy load.
+    return $c->delay(
+        sub { $c->list_jobs( shift->begin ) },
+        sub {
+            my ( $delay, $err, $jobs ) = @_;
+            return $c->reply->not_found
+                unless $jobs;
+            return $c->param( jobs => $jobs )->render;
+        },
+    );
+    },
+    'list_build';
+
 group {
 
     # Global logic shared by all routes
@@ -528,22 +544,6 @@ group {
         $c->render( text => "Invalid token" );
         return undef;
     };
-
-    get '/jobs' => { layout => 'result' } => sub {
-        my $c = shift;
-
-        # Retrieve of build data could be delayed if we are under heavy load.
-        return $c->delay(
-            sub { $c->list_jobs( shift->begin ) },
-            sub {
-                my ( $delay, $err, $jobs ) = @_;
-                return $c->reply->not_found
-                    unless $jobs;
-                return $c->param( jobs => $jobs )->render;
-            },
-        );
-        },
-        'list_build';
 
     post '/build' => sub {
         my $c          = shift;
@@ -696,9 +696,9 @@ __DATA__
       var term = $('#terminal').terminal(function(command, term) {},{
           greetings: 'Build',
           name: 'build',
-          height: 500,
+          height: 600,
       });
-
+      term.pause();
       save_state.push(term.export_view()); // save initial state
       $(window).on('popstate', function(e) {
           if (save_state.length) {
@@ -713,7 +713,7 @@ __DATA__
       <% } %>
 
       function getData() {
-      term.pause();
+
 
         $.ajax({
         <% if (param('build_data')->{id}) { %>
@@ -730,8 +730,10 @@ __DATA__
           })
           .done(function( data ) {
                build_data += data;
-               pos += data.length;
-               term.echo(" "+data.trim()).resume();
+               if (data.length > 0) {
+                  pos += data.length;
+                  term.echo(" "+data.trim());
+               }
           });
         }
 		});
