@@ -77,13 +77,15 @@ app->asset->process(
     'app.css' => (
         'https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css',
         'https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap-theme.min.css',
+        'https://cdnjs.cloudflare.com/ajax/libs/jquery.terminal/1.8.0/css/jquery.terminal.min.css'
     )
 );
 app->asset->process(
     'app.js' => (
-        'https://code.jquery.com/jquery-3.2.1.min.js',
+        'https://code.jquery.com/jquery-3.1.0.min.js',
         'https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/js/bootstrap.min.js',
         'https://raw.githubusercontent.com/drudru/ansi_up/master/ansi_up.js',
+        'https://cdnjs.cloudflare.com/ajax/libs/jquery.terminal/1.8.0/js/jquery.terminal.min.js',
         (FA_URL) x !!(FA_URL)
     )
 );
@@ -378,7 +380,7 @@ helper build_data => sub {
     my $shared_data;
     local ( $!, $@ );
     eval { $shared_data = lock_retrieve( path( WORKDIR, SHARED_DATA ) ); };
-
+    $shared_data->{$id}->{sha} = $id;
     return $c->$cb( $@ || $!, $shared_data->{$id} );
 };
 
@@ -388,7 +390,7 @@ helper job_data => sub {
     my $shared_data;
     local ( $!, $@ );
     eval { $shared_data = lock_retrieve( path( WORKDIR, SHARED_DATA ) ); };
-
+    $shared_data->{ci}->{$id}->{id} = $id;
     return $c->$cb( $@ || $!, $shared_data->{ci}->{$id} );
 };
 
@@ -434,6 +436,27 @@ get '/build/:sha' => { layout => 'result' } => sub {
     },
     'build';
 
+get '/build/:sha/stream_output' => { layout => 'result' } => sub {
+    my $c   = shift;
+    my $sha = $c->param('sha');
+    my $pos = $c->param('pos');
+
+    # Retrieve of build data could be delayed if we are under heavy load.
+    return $c->delay(
+        sub { $c->build_data( $sha => shift->begin ) },
+        sub {
+            my $build_data = pop;
+            my ( $delay, $err ) = @_;
+            return $c->reply->not_found
+                unless $build_data;
+            return $c->param(
+                build_data => substr( "@{$build_data->{output}}", $pos ) )
+                ->render;
+        },
+    );
+    },
+    'build';
+
 get '/job/:id' => { layout => 'result' } => sub {
     my $c  = shift;
     my $id = $c->param('id');
@@ -447,6 +470,45 @@ get '/job/:id' => { layout => 'result' } => sub {
             return $c->reply->not_found
                 unless $build_data;
             return $c->param( build_data => $build_data )->render;
+        },
+    );
+    },
+    'build';
+
+get '/job/:id/output' => { layout => 'result' } => sub {
+    my $c  = shift;
+    my $id = $c->param('id');
+
+    # Retrieve of build data could be delayed if we are under heavy load.
+    return $c->delay(
+        sub { $c->job_data( $id => shift->begin ) },
+        sub {
+            my $build_data = pop;
+            my ( $delay, $err ) = @_;
+            return $c->reply->not_found
+                unless $build_data;
+            return $c->render(
+                text => join( "\n", @{ $build_data->{output} } ) );
+        },
+    );
+    },
+    'build';
+
+get '/job/:id/stream_output' => { layout => 'result' } => sub {
+    my $c   = shift;
+    my $id  = $c->param('id');
+    my $pos = $c->param('pos');
+
+    # Retrieve of build data could be delayed if we are under heavy load.
+    return $c->delay(
+        sub { $c->job_data( $id => shift->begin ) },
+        sub {
+            my $build_data = pop;
+            my ( $delay, $err ) = @_;
+            return $c->reply->not_found
+                unless $build_data;
+            return $c->render(
+                text => substr( "@{$build_data->{output}}", $pos ) );
         },
     );
     },
@@ -546,8 +608,8 @@ __DATA__
   <meta name="description" content="Sabayon build bot report">
   <meta name="viewport" content="width=device-width, initial-scale=0.9" />
   %= content 'head'
-  %= asset 'app.js'
   %= asset 'app.css'
+  %= asset 'app.js'
   %= stylesheet begin
   .alert {
       display: inline-block;
@@ -573,23 +635,104 @@ __DATA__
 </body>
 </html>
 @@ build.html.ep
-<% if (param('build_data')->{status} and param('build_data')->{status} eq "building") { %>
-%  content_for head => begin
-   <meta http-equiv="refresh" content="3" >
-% end
-<% } else { %>
-<script type="text/javascript">
-$(function() {
-      var ansi_up = new AnsiUp;
+<style>
+@keyframes blink {
+    50% {
+        color: #000;
+        background: #0c0;
+        -webkit-box-shadow: 0 0 5px rgba(0,100,0,50);
+        box-shadow: 0 0 5px rgba(0,100,0,50);
+    }
+}
+@-webkit-keyframes blink {
+    50% {
+        color: #000;
+        background: #0c0;
+        -webkit-box-shadow: 0 0 5px rgba(0,100,0,50);
+        box-shadow: 0 0 5px rgba(0,100,0,50);
+    }
+}
+@-ms-keyframes blink {
+    50% {
+        color: #000;
+        background: #0c0;
+        -webkit-box-shadow: 0 0 5px rgba(0,100,0,50);
+        box-shadow: 0 0 5px rgba(0,100,0,50);
+    }
+}
+@-moz-keyframes blink {
+    50% {
+        color: #000;
+        background: #0c0;
+        -webkit-box-shadow: 0 0 5px rgba(0,100,0,50);
+        box-shadow: 0 0 5px rgba(0,100,0,50);
+    }
+}
+.terminal {
+    --background: #000;
+    --color: #0c0;
+    text-shadow: 0 0 3px rgba(0,100,0,50);
+}
+.cmd .cursor.blink {
+    -webkit-animation: 1s blink infinite;
+    animation: 1s blink infinite;
+    -webkit-box-shadow: 0 0 0 rgba(0,100,0,50);
+    box-shadow: 0 0 0 rgba(0,100,0,50);
+    border: none;
+    margin: 0;
+}
+</style>
 
-      var html = ansi_up.ansi_to_html(document.getElementById("build_output").innerHTML);
+<script type='text/javascript'>
 
-      var cdiv = document.getElementById("build_output");
+	  $(document).ready(function() {
+      var pos = 0;
+      var build_data;
 
-      cdiv.innerHTML = html;
-});
+      var save_state = [];
+      var term = $('#terminal').terminal(function(command, term) {},{
+          greetings: 'Build',
+          name: 'build',
+          height: 500,
+      });
+
+      save_state.push(term.export_view()); // save initial state
+      $(window).on('popstate', function(e) {
+          if (save_state.length) {
+              term.import_view(save_state[history.state || 0]);
+          }
+      });
+
+      getData();
+
+      <% if (param('build_data')->{status} and param('build_data')->{status} eq "building") { %>
+          setInterval(getData, 6000);
+      <% } %>
+
+      function getData() {
+        $.ajax({
+        <% if (param('build_data')->{id}) { %>
+        url: "/job/<%= param('build_data')->{id} %>/stream_output",
+        <% } elsif (param('build_data')->{sha}) { %>
+            url: "/build/<%= param('build_data')->{sha} %>/stream_output",
+        <% } %>
+            data: {
+                 "pos": pos,
+             },
+            beforeSend: function( xhr ) {
+              xhr.overrideMimeType( "text/plain; charset=x-user-defined" );
+            }
+          })
+          .done(function( data ) {
+           build_data += data;
+           pos = build_data.length;
+              term.echo(data).resume();
+          });
+        }
+		});
+
 </script>
-<% } %>
+
 <div class="container vertical-offset-100">
     <div class="">
         <div class="text-center">
@@ -647,13 +790,14 @@ $(function() {
         </div>
         <% } %>
         <% if (param('build_data')->{output}){ %>
-        <div class="panel panel-default">
-            <div class="panel-heading"><i class="fa fa-info-circle"></i>  <strong class="">Information</strong>
 
-            </div>
+        <div class="panel panel-default">
+
+            <div class="panel-heading"><i class="fa fa-info-circle"></i>  <strong class="">Information</strong></div>
+            <div class="panel-body" id="terminal">Loading terminal...</div>
             <div class="panel-body" id="build_output">
             % foreach my $line (@{param('build_data')->{output}}) {
-                <p><%= $line %></p>
+            % #    <p><%= $line %></p>
                 % }
             </div>
         </div>
