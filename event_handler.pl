@@ -297,7 +297,6 @@ app->minion->add_task(
 
         # Execute the build.
         # Passing the github data into the process STDIN
-        my @output;
         my $return;
         my $workdir = tempdir( DIR => HOST_SHARED_DIR );
 
@@ -364,7 +363,6 @@ app->minion->add_task(
         $shared_data{"ci"}{$id}{return}      = $return;
         $shared_data{"ci"}{$id}{exit_status} = $return >> 8;
         $shared_data{"ci"}{$id}{status}      = $state;
-        $shared_data{"ci"}{$id}{output}      = \@output;
         $job->app->log->debug( "Saved build status for '$id' : "
                 . Dumper( $shared_data{"ci"}{$id} ) );
 
