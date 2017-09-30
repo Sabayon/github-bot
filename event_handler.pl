@@ -89,7 +89,11 @@ app->asset->process(
         (FA_URL) x !!(FA_URL)
     )
 );
-
+app->asset->process(
+    'formatting.js' => (
+        'https://raw.githubusercontent.com/jcubic/jquery.terminal/master/js/unix_formatting.js'
+    )
+);
 app->defaults( title => PAGE_TITLE );
 app->log->level( DEBUG ? 'debug' : 'info' );
 
@@ -217,7 +221,7 @@ app->minion->add_task(
 
 # this makes /sha/ARTIFACTS_FOLDER accessible as static. (e.g. /a2cb1/artifacts )
             $shared_data{$sha}{asset}     = $dest->to_string;
-            $shared_data{$sha}{asset_url} = BASE_URL . "/$sha/artifacts";
+            $shared_data{$sha}{asset_url} = "/$sha/artifacts";
 
 # this makes /sha/ARTIFACTS_FOLDER accessible as static. (e.g. /a2cb1/artifacts )
 #$shared_data{$sha}{asset} = $asset->copy_to(path(ROOTDIR_STATIC_FILES,$sha)->make_path)->to_string;
@@ -352,9 +356,8 @@ app->minion->add_task(
             $job->app->log->debug("Copying $asset to $dest");
             system("cp -rfv $asset $dest");
 
-            $shared_data{"ci"}{$id}{asset} = $dest->to_string;
-            $shared_data{"ci"}{$id}{asset_url} =
-                BASE_URL . "/repo/$namespace";
+            $shared_data{"ci"}{$id}{asset}     = $dest->to_string;
+            $shared_data{"ci"}{$id}{asset_url} = "/repo/$namespace";
         }
 
         $job->app->log->debug("Cleanup $workdir");
@@ -705,11 +708,13 @@ __DATA__
 
       getData();
 
-      <% if (param('build_data')->{status} and param('build_data')->{status} eq "building") { %>
+      <% if (param('build_data') && param('build_data')->{status} && param('build_data')->{status} eq "building") { %>
           setInterval(getData, 6000);
       <% } %>
 
       function getData() {
+      term.pause();
+
         $.ajax({
         <% if (param('build_data')->{id}) { %>
         url: "/job/<%= param('build_data')->{id} %>/stream_output",
@@ -724,14 +729,15 @@ __DATA__
             }
           })
           .done(function( data ) {
-           build_data += data;
-           pos = build_data.length;
-              term.echo(data).resume();
+               build_data += data;
+               pos += data.length;
+               term.echo(" "+data.trim()).resume();
           });
         }
 		});
 
 </script>
+%= asset 'formatting.js'
 
 <div class="container vertical-offset-100">
     <div class="">
