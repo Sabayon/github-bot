@@ -35,7 +35,7 @@ docker run -tid -v /var/run/docker.sock:/var/run/docker.sock \
               --name sabayon-github-bot-worker1 \
               --network sabayon-github-bot \
               --volumes-from sabayon-github-bot-shared \
-              -v /tmp/container:/tmp/container/ \
+              -v /tmp:/tmp/ \
               --env-file $ENVFILE \
               --restart always \
               sabayon/github-bot:latest \
