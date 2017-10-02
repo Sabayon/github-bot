@@ -144,7 +144,7 @@ app->minion->add_task(
         # XXX: Security, Return also if changed file is just the BUILD_SCRIPT
         $job->app->log->info(
             "Event: $event_type SHA: $sha [PR#$pr_number] - Build start");
-        my %shared_data;
+        my %shared_data = %{ +lock_retrieve( path( WORKDIR, SHARED_DATA ) ) };
 
         # update github status.
         my $status = $repos->create_status(
@@ -294,7 +294,7 @@ app->minion->add_task(
 
         $job->app->log->info("ID $id repo $repo dir $dir - Build received");
 
-        my %shared_data;
+        my %shared_data = %{ +lock_retrieve( path( WORKDIR, SHARED_DATA ) ) };
 
         $shared_data{"ci"}{$id}{status}     = "building";
         $shared_data{"ci"}{$id}{start_time} = time;
