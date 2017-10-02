@@ -287,8 +287,8 @@ app->minion->add_task(
 
         my $repo      = $parameters->{repo};
         my $dir       = $parameters->{folder};
-        my $namespace = $parameters->{namespace};
         my $id        = $parameters->{id};
+        my $namespace = $parameters->{namespace} // $id;
 
         my $status_url = BASE_URL . "/job/$id";
 
@@ -552,7 +552,6 @@ group {
         return $c->render( text => "Invalid parameters" )
             unless $parameters
             && $parameters->{repo}
-            && $parameters->{namespace}
             && $parameters->{folder};
 
         app->log->debug("Job enqueued");
